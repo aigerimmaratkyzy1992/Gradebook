@@ -1,0 +1,14 @@
+# Netlify — frontend (Vite + React).
+[build]
+  base = "frontend"
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# SPA: react-router жолдары серверде жоқ, бәрі index.html-ге бағытталады.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

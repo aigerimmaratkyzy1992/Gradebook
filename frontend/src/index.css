@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+/* Дизайн жүйесі: төрт негізгі түс + оқылатын әлсіз мәтін реңкі. */
+@theme {
+  --color-ink: #343434;
+  --color-line: #d2d2d2;
+  --color-canvas: #fbfbfb;
+  --color-surface: #ffffff;
+  --color-muted: #6b6b6b;
+  --font-sans: "General Sans", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  body {
+    font-family: var(--font-sans);
+    color: var(--color-ink);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Тақырыптар қалың әрі тығыз — референстегідей. */
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.02em;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-ink);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}

@@ -1,0 +1,40 @@
+# Render Blueprint — backend (FastAPI). БД Render-де емес, Neon-да.
+# Dashboard → New → Blueprint → осы репозиторийді таңдау.
+services:
+  - type: web
+    name: gradebook-api
+    runtime: python
+    plan: free
+    region: frankfurt
+    rootDir: backend
+    # Миграциялар деплой алдында, build кезінде жүреді.
+    buildCommand: pip install -r requirements.txt && alembic upgrade head
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.4
+      - key: DEBUG
+        value: "false"
+      # JWT кілті — Render өзі генерациялайды.
+      - key: SECRET_KEY
+        generateValue: true
+      # Қалғаны Render дашбордында қолмен толтырылады (DEPLOY.md қара).
+      - key: DATABASE_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: ADMIN_EMAILS
+        sync: false
+      - key: DEFAULT_PASSWORD
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false

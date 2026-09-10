@@ -1,11 +1,32 @@
+import json
+from typing import Annotated
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # libpq (psql, Neon сілтемесі) түсінетін, бірақ asyncpg қабылдамайтын параметрлер.
 LIBPQ_ONLY_PARAMS = {"sslmode", "channel_binding", "connect_timeout"}
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def parse_list(value: object) -> object:
+    """Тізім өрістері: JSON да, үтірмен бөлінген жол да, бос жол да жарайды.
+
+    Хостинг панельдерінде бос немесе `a,b` түрінде теруге оңай — сондықтан
+    әдепкі JSON талдауына сүйенбейміз (бос жол қате беретін)."""
+    if not isinstance(value, str):
+        return value
+
+    text = value.strip()
+    if not text:
+        return []
+    if text.startswith("["):
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return []
+    return [item.strip() for item in text.split(",") if item.strip()]
 
 
 class Settings(BaseSettings):
@@ -16,7 +37,10 @@ class Settings(BaseSettings):
     database_url: str = (
         "postgresql+asyncpg://gradebook:gradebook@localhost:5432/gradebook"
     )
-    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:5174"]
+    cors_origins: Annotated[list[str], NoDecode] = [
+        "http://localhost:5173",
+        "http://localhost:5174",
+    ]
 
     secret_key: str = "dev-secret-key-change-me-in-production-32b"
     access_token_ttl_minutes: int = 60 * 24
@@ -63,7 +87,11 @@ class Settings(BaseSettings):
         return args
 
     # Осы поштамен тіркелген пайдаланушылар admin рөлін алады.
-    admin_emails: list[str] = []
+    admin_emails: Annotated[list[str], NoDecode] = []
+
+    _parse_lists = field_validator("cors_origins", "admin_emails", mode="before")(
+        parse_list
+    )
 
     # Admin пароль сбросын жасағанда қойылатын стандартты пароль.
     default_password: str = "Gradebook2026"

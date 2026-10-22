@@ -6,6 +6,8 @@
 
 [build.environment]
   NODE_VERSION = "22"
+  # Backend адресі (Render). netlify.toml мәні Netlify UI-дағы айнымалыдан басым.
+  VITE_API_URL = "https://gradebook-api-jpv7.onrender.com"
 
 # SPA: react-router жолдары серверде жоқ, бәрі index.html-ге бағытталады.
 [[redirects]]

@@ -189,3 +189,16 @@ async def test_schedule_create_edit_and_delete(download_client):
     assert (await client.delete(f"/api/schedule/{lesson_id}", headers=authorization(2))).status_code == 403
     assert (await client.delete(f"/api/schedule/{lesson_id}", headers=headers)).status_code == 204
     assert (await client.get("/api/schedule", headers=headers)).json() == []
+
+
+@pytest.mark.anyio
+async def test_login_ignores_email_case(download_client):
+    client, _ = download_client
+    response = await client.post("/api/auth/register", json={
+        "email": "Mixed.Case@Example.com", "password": "Password123", "full_name": "Test",
+    })
+    assert response.status_code in (200, 201)
+    response = await client.post("/api/auth/login", json={
+        "email": "mixed.case@example.com", "password": "Password123",
+    })
+    assert response.status_code == 200

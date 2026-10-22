@@ -1,7 +1,7 @@
 import secrets
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -30,7 +30,8 @@ class TooManyAttempts(Exception):
 
 
 async def get_by_email(db: AsyncSession, email: str) -> User | None:
-    return await db.scalar(select(User).where(User.email == email))
+    # Телефонда почта жиі кіші әріппен терілгендіктен, регистр ескерілмейді.
+    return await db.scalar(select(User).where(func.lower(User.email) == email.lower()))
 
 
 async def register(

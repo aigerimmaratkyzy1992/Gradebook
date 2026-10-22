@@ -1,8 +1,9 @@
 <!doctype html>
-<html lang="kk">
+<html lang="ru">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <link rel="preconnect" href="https://api.fontshare.com" />
     <link rel="preconnect" href="https://cdn.fontshare.com" crossorigin />
     <link
@@ -10,6 +11,19 @@
       rel="stylesheet"
     />
     <title>Gradebook</title>
+    <!-- Тақырыпты React жүктелмей тұрып қоямыз — ақ жыпылықтау болмауы үшін.
+         Кілт `src/constants/theme.ts` ішіндегі THEME_STORAGE_KEY-мен бірдей болуы керек. -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("gradebook-theme");
+          var isDark =
+            stored === "dark" ||
+            (stored !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.classList.toggle("dark", isDark);
+        } catch (_) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

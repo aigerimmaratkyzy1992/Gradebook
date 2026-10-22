@@ -24,6 +24,11 @@ export function formatDate(iso: string | null): string {
   });
 }
 
+/** Backend уақытты `HH:MM:SS` түрінде береді — секундтар керек емес. */
+export function formatTime(value: string): string {
+  return value.slice(0, 5);
+}
+
 /** Мерзімі өтіп кеткен бе. */
 export function isOverdue(iso: string | null): boolean {
   return Boolean(iso) && new Date(iso as string).getTime() < Date.now();

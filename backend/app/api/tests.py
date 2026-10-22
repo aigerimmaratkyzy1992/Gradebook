@@ -5,8 +5,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import CurrentUser, Db, require_role
-from app.models import Course, Test, TestAttempt, Topic, User
-from app.models.test import MATCH, QUESTION_KINDS
+from app.models import Test, TestAttempt, User
+from app.models.test import MATCH, QUESTION_KINDS, SHORT
 from app.roles import ADMIN, STUDENT, TEACHER
 from app.schemas.test import (
     AttemptResultResponse,
@@ -27,6 +27,7 @@ from app.services import course as course_service
 from app.services import notification as notification_service
 from app.services import submission as submission_service
 from app.services import test as test_service
+from app.services.course import TopicRef
 from app.services.test import AttemptClosed, AttemptsExhausted, TestClosed
 
 tests_router = APIRouter()
@@ -38,35 +39,37 @@ StaffUser = Annotated[User, Depends(require_role(ADMIN, TEACHER))]
 StudentUser = Annotated[User, Depends(require_role(STUDENT))]
 
 
-async def _course_of_topic(db: Db, topic_id: int) -> Course:
-    topic = await db.get(Topic, topic_id)
+async def _topic(db: Db, topic_id: int) -> TopicRef:
+    """Тақырып + курс иесі: ағашсыз, бір шағын сұраныс."""
+    topic = await course_service.topic_ref(db, topic_id)
     if topic is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Тема не найдена")
-
-    course = await course_service.get_course(db, topic.course_id)
-    if course is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Дисциплина не найдена")
-    return course
+    return topic
 
 
-async def _test_for_edit(db: Db, test_id: int, user: User) -> Test:
-    test = await test_service.get_test(db, test_id)
+async def _test_for_edit(
+    db: Db, test_id: int, user: User, *, full: bool = False
+) -> Test:
+    """full=True — сұрақтарымен (жауапта көрсету, өшіру үшін), әйтпесе тестің өзі."""
+    test = await test_service.get_test(db, test_id, full=full)
     if test is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Тест не найден")
 
-    course = await _course_of_topic(db, test.topic_id)
-    if user.role != ADMIN and course.teacher_id != user.id:
+    topic = await _topic(db, test.topic_id)
+    if not course_service.is_owner_or_admin(user, topic.teacher_id):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав")
     return test
 
 
-async def _test_for_view(db: Db, test_id: int, user: User) -> Test:
-    test = await test_service.get_test(db, test_id)
+async def _test_for_view(
+    db: Db, test_id: int, user: User, *, full: bool = False
+) -> Test:
+    test = await test_service.get_test(db, test_id, full=full)
     if test is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Тест не найден")
 
-    course = await _course_of_topic(db, test.topic_id)
-    if not await course_service.can_view(db, course, user):
+    topic = await _topic(db, test.topic_id)
+    if not await course_service.can_view_course(db, topic.course_id, user):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав")
     return test
 
@@ -94,13 +97,13 @@ def _full(test: Test) -> TestFullResponse:
 async def create_test(
     topic_id: int, data: CreateTestRequest, db: Db, user: StaffUser
 ) -> TestFullResponse:
-    course = await _course_of_topic(db, topic_id)
-    if user.role != ADMIN and course.teacher_id != user.id:
+    topic = await _topic(db, topic_id)
+    if not course_service.is_owner_or_admin(user, topic.teacher_id):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав")
 
     test = await test_service.create_test(db, topic_id, data.model_dump())
 
-    students = await submission_service.students_of(db, course)
+    students = await submission_service.students_of(db, topic.course_id)
     await notification_service.notify(
         db,
         [student.id for student in students],
@@ -112,7 +115,7 @@ async def create_test(
 
 @tests_router.get("/{test_id}")
 async def get_test(test_id: int, db: Db, user: StaffUser) -> TestFullResponse:
-    return _full(await _test_for_edit(db, test_id, user))
+    return _full(await _test_for_edit(db, test_id, user, full=True))
 
 
 @tests_router.patch("/{test_id}")
@@ -126,7 +129,8 @@ async def update_test(
 
 @tests_router.delete("/{test_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_test(test_id: int, db: Db, user: StaffUser) -> None:
-    test = await _test_for_edit(db, test_id, user)
+    # Өшіру кезінде ORM каскады үшін сұрақтар мен нұсқалар жүктелуі керек.
+    test = await _test_for_edit(db, test_id, user, full=True)
     await test_service.delete_test(db, test)
 
 
@@ -137,10 +141,10 @@ async def add_question(
     if data.kind not in QUESTION_KINDS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Неизвестный тип вопроса")
 
-    test = await _test_for_edit(db, test_id, user)
+    await _test_for_edit(db, test_id, user)
     test = await test_service.add_question(
         db,
-        test,
+        test_id,
         data.kind,
         data.text,
         data.points,
@@ -184,7 +188,7 @@ async def delete_question(
 
 @tests_router.post("/{test_id}/start")
 async def start_test(test_id: int, db: Db, user: StudentUser) -> TestTakeResponse:
-    test = await _test_for_view(db, test_id, user)
+    test = await _test_for_view(db, test_id, user, full=True)
 
     try:
         attempt = await test_service.start_attempt(db, test, user.id)
@@ -209,9 +213,16 @@ async def start_test(test_id: int, db: Db, user: StudentUser) -> TestTakeRespons
                 kind=question.kind,
                 text=question.text,
                 points=question.points,
-                options=[
-                    OptionResponse(id=option.id, text=option.text) for option in options
-                ],
+                # «Қысқа жауап»: дұрыс жауаптар Option.text ішінде жатыр —
+                # студентке нұсқаларды көрсетпейміз, әйтпесе жауап ашылып қалады.
+                options=(
+                    []
+                    if question.kind == SHORT
+                    else [
+                        OptionResponse(id=option.id, text=option.text)
+                        for option in options
+                    ]
+                ),
                 match_targets=targets if question.kind == MATCH else [],
             )
         )
@@ -236,7 +247,7 @@ async def finish_attempt(
     if attempt is None or attempt.student_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Попытка не найдена")
 
-    test = await _test_for_view(db, attempt.test_id, user)
+    test = await _test_for_view(db, attempt.test_id, user, full=True)
 
     answers: dict[int, object] = {}
     for answer in data.answers:
@@ -291,7 +302,8 @@ async def list_attempts(
     test_id: int, db: Db, user: StaffUser
 ) -> list[AttemptRowResponse]:
     test = await _test_for_edit(db, test_id, user)
-    course = await _course_of_topic(db, test.topic_id)
+    topic = await _topic(db, test.topic_id)
+    max_score = await test_service.max_score_of(db, test_id)
 
     attempts = await test_service.all_attempts(db, test_id)
     by_student: dict[int, list[TestAttempt]] = {}
@@ -299,7 +311,7 @@ async def list_attempts(
         by_student.setdefault(attempt.student_id, []).append(attempt)
 
     rows: list[AttemptRowResponse] = []
-    for student in await submission_service.students_of(db, course):
+    for student in await submission_service.students_of(db, topic.course_id):
         items = [
             item for item in by_student.get(student.id, []) if item.finished_at
         ]
@@ -308,7 +320,7 @@ async def list_attempts(
                 student=UserResponse.model_validate(student),
                 attempts=len(items),
                 best_score=max((item.score for item in items), default=None),
-                max_score=test_service.max_score(test),
+                max_score=max_score,
                 last_finished_at=max(
                     (item.finished_at for item in items if item.finished_at),
                     default=None,

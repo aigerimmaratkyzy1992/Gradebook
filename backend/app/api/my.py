@@ -27,8 +27,7 @@ class MyAssignmentResponse(BaseModel):
 @router.get("/assignments")
 async def my_assignments(db: Db, user: CurrentUser) -> list[MyAssignmentResponse]:
     """Пайдаланушыға қолжетімді барлық тапсырма — мерзімі мен күйімен бірге."""
-    courses = await course_service.list_courses(db, user)
-    course_names = {course.id: course.name for course in courses}
+    course_names = await course_service.visible_course_names(db, user)
     if not course_names:
         return []
 

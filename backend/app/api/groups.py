@@ -67,8 +67,10 @@ async def update_group(
     group_id: int, data: UpdateGroupRequest, db: Db, user: StaffUser
 ) -> GroupDetailResponse:
     group = await _group_for(db, group_id, user)
-    # Преподавательді тек admin ауыстырады.
-    teacher_id = data.teacher_id if user.role == ADMIN else group.teacher_id
+    # Преподавательді тек admin ауыстырады, және тек teacher_id жіберілсе:
+    # әйтпесе PATCH тек атауын өзгерткенде преподаватель өшіп қалады.
+    change_teacher = user.role == ADMIN and "teacher_id" in data.model_fields_set
+    teacher_id = data.teacher_id if change_teacher else group.teacher_id
     try:
         group = await group_service.update_group(db, group, data.name, teacher_id)
     except TeacherNotFound:
@@ -111,6 +113,7 @@ async def remove_student(
     group_id: int, student_id: int, db: Db, user: StaffUser
 ) -> GroupDetailResponse:
     group = await _group_for(db, group_id, user)
-    if not await group_service.remove_student(db, group, student_id):
+    updated = await group_service.remove_student(db, group, student_id)
+    if updated is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Студент не найден в группе")
-    return GroupDetailResponse.model_validate(group)
+    return GroupDetailResponse.model_validate(updated)

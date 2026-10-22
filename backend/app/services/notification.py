@@ -4,8 +4,8 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Assignment, Notification, Submission
-from app.services.submission import course_of, students_of
+from app.models import Assignment, Course, Notification, Submission, Topic
+from app.services.submission import students_of
 
 # Мерзімнен қанша уақыт бұрын ескерту жіберіледі.
 REMIND_BEFORE = timedelta(hours=24)
@@ -60,9 +60,13 @@ async def send_due_reminders(db: AsyncSession) -> int:
 
     Студентке — тапсырмағандарына, преподавательге — жалпы саны."""
     now = datetime.now(UTC)
+    # Тек бағандар: тапсырма ағашы мен курс нысаны жүктелмейді.
     soon = (
-        await db.scalars(
-            select(Assignment).where(
+        await db.execute(
+            select(Assignment.id, Assignment.title, Course.id, Course.teacher_id)
+            .join(Topic, Topic.id == Assignment.topic_id)
+            .join(Course, Course.id == Topic.course_id)
+            .where(
                 Assignment.due_at.is_not(None),
                 Assignment.due_at > now,
                 Assignment.due_at <= now + REMIND_BEFORE,
@@ -71,36 +75,37 @@ async def send_due_reminders(db: AsyncSession) -> int:
         )
     ).all()
 
-    for assignment in soon:
-        course = await course_of(db, assignment)
+    for assignment_id, title, course_id, teacher_id in soon:
         submitted = set(
             (
                 await db.scalars(
                     select(Submission.student_id).where(
-                        Submission.assignment_id == assignment.id
+                        Submission.assignment_id == assignment_id
                     )
                 )
             ).all()
         )
         pending = [
             student.id
-            for student in await students_of(db, course)
+            for student in await students_of(db, course_id)
             if student.id not in submitted
         ]
-        link = f"/assignments/{assignment.id}"
+        link = f"/assignments/{assignment_id}"
 
-        await notify(
-            db, pending, f"Завтра заканчивается срок сдачи: {assignment.title}", link
-        )
-        if course.teacher_id and pending:
+        await notify(db, pending, f"Завтра заканчивается срок сдачи: {title}", link)
+        if teacher_id and pending:
             await notify(
                 db,
-                [course.teacher_id],
-                f"{len(pending)} студентов не сдали работу: {assignment.title}",
+                [teacher_id],
+                f"{len(pending)} студентов не сдали работу: {title}",
                 link,
             )
 
-        assignment.reminded_at = now
+        await db.execute(
+            update(Assignment)
+            .where(Assignment.id == assignment_id)
+            .values(reminded_at=now)
+        )
 
     await db.commit()
     return len(soon)

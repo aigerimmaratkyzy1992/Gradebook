@@ -1,0 +1,9 @@
+export type * from "./course";
+export type * from "./forms";
+export type * from "./gradebook";
+export type * from "./group";
+export type * from "./notification";
+export type * from "./schedule";
+export type * from "./submission";
+export type * from "./test";
+export type * from "./user";

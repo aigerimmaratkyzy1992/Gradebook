@@ -1,23 +1,121 @@
 @import "tailwindcss";
 
-/* Дизайн жүйесі: төрт негізгі түс + оқылатын әлсіз мәтін реңкі. */
-@theme {
-  --color-ink: #343434;
-  --color-line: #d2d2d2;
-  --color-canvas: #fbfbfb;
-  --color-surface: #ffffff;
-  --color-muted: #6b6b6b;
+/* `.dark` класы <html>-де болса — қараңғы тақырып (index.html ішіндегі скрипт қояды). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Дизайн жүйесінің жалғыз көзі. Компоненттер тек семантикалық атауларды
+ * қолданады (bg-background, text-muted-foreground, border-border…), hex емес.
+ */
+:root {
+  --background: #fbfbfb;
+  --foreground: #343434;
+  --card: #ffffff;
+  --card-foreground: #343434;
+  --popover: #ffffff;
+  --popover-foreground: #343434;
+  --primary: #343434;
+  --primary-foreground: #ffffff;
+  --secondary: #f2f2f2;
+  --secondary-foreground: #343434;
+  --muted: #f4f4f4;
+  --muted-foreground: #6b6b6b;
+  --accent: #f0f0f0;
+  --accent-foreground: #343434;
+  --border: #e2e2e2;
+  --input: #d2d2d2;
+  --ring: #343434;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --success: #15803d;
+  --warning: #b45309;
+  --chart-1: #343434;
+  --chart-2: #8a8a8a;
+  --chart-3: #c4c4c4;
+  --radius: 0.75rem;
+}
+
+.dark {
+  --background: #111111;
+  --foreground: #ededed;
+  --card: #181818;
+  --card-foreground: #ededed;
+  --popover: #1c1c1c;
+  --popover-foreground: #ededed;
+  --primary: #ededed;
+  --primary-foreground: #161616;
+  --secondary: #232323;
+  --secondary-foreground: #ededed;
+  --muted: #1f1f1f;
+  --muted-foreground: #9b9b9b;
+  --accent: #262626;
+  --accent-foreground: #ededed;
+  --border: #2a2a2a;
+  --input: #363636;
+  --ring: #ededed;
+  --destructive: #f87171;
+  --destructive-foreground: #161616;
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --chart-1: #ededed;
+  --chart-2: #8f8f8f;
+  --chart-3: #4a4a4a;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
   --font-sans: "General Sans", ui-sans-serif, system-ui, sans-serif;
 }
 
 @layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    color-scheme: light;
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+
   body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
     font-family: var(--font-sans);
-    color: var(--color-ink);
     -webkit-font-smoothing: antialiased;
   }
 
-  /* Тақырыптар қалың әрі тығыз — референстегідей. */
   h1,
   h2,
   h3 {
@@ -25,12 +123,12 @@
   }
 
   button:not(:disabled),
-  [role="button"]:not(:disabled) {
+  [role="button"]:not([aria-disabled="true"]) {
     cursor: pointer;
   }
 
   :focus-visible {
-    outline: 2px solid var(--color-ink);
+    outline: 2px solid var(--color-ring);
     outline-offset: 2px;
   }
 

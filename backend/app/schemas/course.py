@@ -2,6 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.common import PatchModel
 from app.schemas.test import TestBrief
 from app.schemas.user import UserResponse
 
@@ -100,7 +101,9 @@ class CreateAssignmentRequest(BaseModel):
     max_score: int = Field(default=100, ge=1, le=1000)
 
 
-class UpdateAssignmentRequest(BaseModel):
+class UpdateAssignmentRequest(PatchModel):
+    non_nullable = ("title", "max_score")
+
     title: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = None
     material_url: str | None = Field(default=None, max_length=500)

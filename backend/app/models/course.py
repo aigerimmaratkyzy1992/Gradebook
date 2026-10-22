@@ -38,14 +38,16 @@ class Course(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
-    teacher: Mapped[User | None] = relationship(lazy="selectin")
+    teacher: Mapped[User | None] = relationship(lazy="joined")
     groups: Mapped[list[Group]] = relationship(
         secondary=course_groups, lazy="selectin", order_by=Group.name
     )
+    # Тақырыптар ағашы тек толық көрсетілімде керек (get_course); тізімдер мен
+    # рұқсат тексерулері оны жүктемеуі үшін lazy="raise_on_sql".
     topics: Mapped[list["Topic"]] = relationship(
         back_populates="course",
         cascade="all, delete-orphan",
-        lazy="selectin",
+        lazy="raise_on_sql",
         order_by="Topic.position",
     )
 
@@ -67,12 +69,12 @@ class Topic(Base):
     assignments: Mapped[list["Assignment"]] = relationship(
         back_populates="topic",
         cascade="all, delete-orphan",
-        lazy="selectin",
+        lazy="raise_on_sql",
         order_by="Assignment.id",
     )
     tests: Mapped[list["Test"]] = relationship(  # noqa: F821
         cascade="all, delete-orphan",
-        lazy="selectin",
+        lazy="raise_on_sql",
         order_by="Test.id",
     )
 

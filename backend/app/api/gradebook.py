@@ -4,11 +4,14 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy import Row
 from openpyxl import Workbook
 from openpyxl.styles import Font
+from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.worksheet import Worksheet
 
 from app.api.deps import Db, require_role
-from app.models import Course, User
+from app.models import User
 from app.roles import ADMIN, TEACHER
 from app.schemas.gradebook import (
     CourseStatsResponse,
@@ -32,8 +35,24 @@ XLSX_MEDIA_TYPE = (
 )
 
 
-async def _course(db: Db, course_id: int, user: User) -> Course:
-    course = await course_service.get_course(db, course_id)
+# Excel формула ретінде оқуы мүмкін бастамалар.
+_FORMULA_PREFIXES = ("=", "+", "-", "@", chr(9), chr(13))
+
+
+def _append(sheet: Worksheet, values: list[object]) -> None:
+    """Жолды қосады; пайдаланушы енгізген жолдар формула болып кетпейді.
+
+    Студент аты, email, тапсырма атауы "=..." деп басталса, openpyxl оны формула
+    етіп жазар еді (formula injection). Мұндай ұяшықтарды мәтін ретінде жазамыз."""
+    sheet.append(values)
+    for cell in sheet[sheet.max_row]:
+        if isinstance(cell.value, str) and cell.value.startswith(_FORMULA_PREFIXES):
+            cell.data_type = "s"
+
+
+async def _course(db: Db, course_id: int, user: User) -> Row:  # type: ignore[type-arg]
+    """Дисциплина (id, name, teacher_id) — толық ағашсыз, тек рұқсат үшін."""
+    course = await course_service.course_row(db, course_id)
     if course is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Дисциплина не найдена")
     if user.role != ADMIN and course.teacher_id != user.id:
@@ -46,7 +65,7 @@ async def get_gradebook(
     course_id: int, db: Db, user: StaffUser
 ) -> GradebookResponse:
     course = await _course(db, course_id, user)
-    book = await gradebook_service.build(db, course)
+    book = await gradebook_service.build(db, course.id)
 
     return GradebookResponse(
         columns=[GradebookColumn(**column.__dict__) for column in book.columns],
@@ -65,7 +84,7 @@ async def get_gradebook(
 @router.get("/{course_id}/stats")
 async def get_stats(course_id: int, db: Db, user: StaffUser) -> CourseStatsResponse:
     course = await _course(db, course_id, user)
-    book = await gradebook_service.build(db, course)
+    book = await gradebook_service.build(db, course.id)
 
     students = len(book.rows)
     assignments = len(book.columns)
@@ -131,58 +150,58 @@ async def export_gradebook(
     course_id: int, db: Db, user: StaffUser
 ) -> StreamingResponse:
     course = await _course(db, course_id, user)
-    book = await gradebook_service.build(db, course)
+    book = await gradebook_service.build(db, course.id)
 
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Журнал"
 
     header = ["Студент", *(column.title for column in book.columns), "Средний балл"]
-    sheet.append(header)
+    _append(sheet, header)
     for cell in sheet[1]:
         cell.font = Font(bold=True)
 
     for row in book.rows:
-        sheet.append(
+        _append(
+            sheet,
             [
                 row.student.full_name or row.student.email,
                 *(cell.score if cell.score is not None else "—" for cell in row.cells),
                 row.average if row.average is not None else "—",
-            ]
+            ],
         )
 
     sheet.column_dimensions["A"].width = 32
     for index in range(len(book.columns) + 1):
-        sheet.column_dimensions[chr(ord("B") + index)].width = 16
+        sheet.column_dimensions[get_column_letter(index + 2)].width = 16
 
     # Ведомость: әр студент бойынша жинақ.
     summary = workbook.create_sheet("Ведомость")
-    summary.append(
-        ["Студент", "Сдано работ", "Сумма баллов", "Средний балл", "Успеваемость"]
+    _append(
+        summary,
+        ["Студент", "Сдано работ", "Сумма баллов", "Средний балл", "Успеваемость"],
     )
     total_max = sum(column.max_score for column in book.columns)
     for row in book.rows:
         done = sum(1 for cell in row.cells if cell.status is not None)
-        summary.append(
+        _append(
+            summary,
             [
                 row.student.full_name or row.student.email,
                 f"{done} из {len(book.columns)}",
                 row.total,
                 row.average if row.average is not None else "—",
                 f"{round(row.total / total_max * 100, 1)}%" if total_max else "—",
-            ]
+            ],
         )
 
     # Список студентов — топтар бойынша.
     people = workbook.create_sheet("Студенты")
-    people.append(["№", "ФИО", "Email", "Группа"])
+    _append(people, ["№", "ФИО", "Email", "Группа"])
     number = 0
-    for group in course.groups:
-        for student in group.students:
-            number += 1
-            people.append(
-                [number, student.full_name or "—", student.email, group.name]
-            )
+    for group_name, student in await gradebook_service.students_by_group(db, course.id):
+        number += 1
+        _append(people, [number, student.full_name or "—", student.email, group_name])
 
     for extra, widths in ((summary, (32, 16, 16, 16, 16)), (people, (6, 32, 28, 16))):
         for cell in extra[1]:

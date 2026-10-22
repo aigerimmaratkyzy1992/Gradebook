@@ -43,7 +43,7 @@ class Submission(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
-    student: Mapped[User] = relationship(lazy="selectin")
+    student: Mapped[User] = relationship(lazy="joined")
     versions: Mapped[list["SubmissionVersion"]] = relationship(
         back_populates="submission",
         cascade="all, delete-orphan",

@@ -38,3 +38,12 @@ services:
         sync: false
       - key: SMTP_FROM
         sync: false
+      # Cloudflare R2 — жүктелген файлдар (Render free дискі уақытша).
+      - key: S3_ENDPOINT_URL
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_BUCKET
+        sync: false

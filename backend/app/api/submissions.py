@@ -1,10 +1,10 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 
 from app.api.deps import CurrentUser, Db, require_role
-from app.models import Assignment, Submission, SubmissionVersion, User
+from app.models import User
 from app.roles import ADMIN, STUDENT, TEACHER
 from app.schemas.submission import (
     ReviewRequest,
@@ -13,10 +13,11 @@ from app.schemas.submission import (
 )
 from app.schemas.user import UserResponse
 from app.services import course as course_service
+from app.services.course import AssignmentRef
 from app.services import notification as notification_service
 from app.services import storage
 from app.services import submission as submission_service
-from app.services.storage import FileTooLarge, FileTypeNotAllowed
+from app.services.storage import FileMissing, FileTooLarge, FileTypeNotAllowed
 
 router = APIRouter()
 files_router = APIRouter()
@@ -24,25 +25,26 @@ files_router = APIRouter()
 StaffUser = Annotated[User, Depends(require_role(ADMIN, TEACHER))]
 
 
-async def _assignment(db: Db, assignment_id: int) -> Assignment:
-    assignment = await course_service.get_assignment(db, assignment_id)
+async def _assignment(db: Db, assignment_id: int) -> AssignmentRef:
+    """Тек бағандар (ағашсыз): рұқсат тексеруге және хабарламаға жеткілікті."""
+    assignment = await course_service.assignment_ref(db, assignment_id)
     if assignment is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Задание не найдено")
     return assignment
 
 
-async def _assignment_for_view(db: Db, assignment_id: int, user: User) -> Assignment:
+async def _assignment_for_view(db: Db, assignment_id: int, user: User) -> AssignmentRef:
     assignment = await _assignment(db, assignment_id)
-    course = await submission_service.course_of(db, assignment)
-    if not await course_service.can_view(db, course, user):
+    if not await course_service.can_view_course(db, assignment.course_id, user):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав")
     return assignment
 
 
-async def _assignment_for_review(db: Db, assignment_id: int, user: User) -> Assignment:
+async def _assignment_for_review(
+    db: Db, assignment_id: int, user: User
+) -> AssignmentRef:
     assignment = await _assignment(db, assignment_id)
-    course = await submission_service.course_of(db, assignment)
-    if user.role != ADMIN and course.teacher_id != user.id:
+    if not course_service.is_owner_or_admin(user, assignment.teacher_id):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав")
     return assignment
 
@@ -81,13 +83,12 @@ async def submit_work(
             ) from None
         saved.append((str(upload.filename), stored_name, size))
 
-    work = await submission_service.submit(db, assignment, user, text, link, saved)
+    work = await submission_service.submit(db, assignment.id, user.id, text, link, saved)
 
-    course = await submission_service.course_of(db, assignment)
-    if course.teacher_id:
+    if assignment.teacher_id:
         await notification_service.notify(
             db,
-            [course.teacher_id],
+            [assignment.teacher_id],
             f"{user.full_name or user.email} сдал работу: {assignment.title}",
             f"/assignments/{assignment.id}",
         )
@@ -109,9 +110,8 @@ async def list_works(
 ) -> list[StudentWorkResponse]:
     """Тексеру кестесі: топтағы әр студент — бір жол."""
     assignment = await _assignment_for_review(db, assignment_id, user)
-    course = await submission_service.course_of(db, assignment)
 
-    students = await submission_service.students_of(db, course)
+    students = await submission_service.students_of(db, assignment.course_id)
     works = {
         work.student_id: work
         for work in await submission_service.list_submissions(db, assignment_id)
@@ -134,13 +134,15 @@ async def list_works(
 async def review_work(
     submission_id: int, data: ReviewRequest, db: Db, user: StaffUser
 ) -> SubmissionResponse:
-    work = await db.get(Submission, submission_id)
-    if work is None:
+    ref = await submission_service.submission_ref(db, submission_id)
+    if ref is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Работа не найдена")
 
-    assignment = await _assignment_for_review(db, work.assignment_id, user)
+    assignment = await _assignment_for_review(db, ref.assignment_id, user)
+    if data.score is not None and data.score > assignment.max_score:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Балл больше максимального")
     work = await submission_service.review(
-        db, work, data.score, data.comment, data.send_back
+        db, ref.id, data.score, data.comment, data.send_back
     )
 
     await notification_service.notify(
@@ -157,26 +159,25 @@ async def review_work(
 
 
 @files_router.get("/{file_id}")
-async def download_file(file_id: int, db: Db, user: CurrentUser) -> FileResponse:
-    record = await submission_service.get_file(db, file_id)
-    if record is None:
+async def download_file(file_id: int, db: Db, user: CurrentUser) -> Response:
+    access = await submission_service.get_file(db, file_id)
+    if access is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Файл не найден")
-
-    version = await db.get(SubmissionVersion, record.version_id)
-    work = await db.get(Submission, version.submission_id)  # type: ignore[union-attr]
-    assignment = await _assignment(db, work.assignment_id)  # type: ignore[union-attr]
-    course = await submission_service.course_of(db, assignment)
+    record = access.record
 
     # Өз жұмысын студент, қалғанын курс иесі мен admin көреді.
     allowed = (
-        work.student_id == user.id  # type: ignore[union-attr]
+        access.student_id == user.id
         or user.role == ADMIN
-        or course.teacher_id == user.id
+        or access.teacher_id == user.id
     )
     if not allowed:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав")
 
-    path = storage.path_for(record.stored_name)
-    if not path.exists():
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Файл не найден на диске")
-    return FileResponse(path, filename=record.filename)
+    try:
+        return await storage.download_response(record.filename, record.stored_name)
+    except FileMissing:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "Файл не сохранился на сервере — загрузите его заново",
+        ) from None

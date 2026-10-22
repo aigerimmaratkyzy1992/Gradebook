@@ -3,8 +3,9 @@ import random
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models import Option, Question, Test, TestAnswer, TestAttempt
 from app.models.test import MATCH, MULTIPLE, SHORT, SINGLE, TRUE_FALSE
@@ -22,12 +23,30 @@ class TestClosed(Exception):
     """Тест мерзімі өтіп кеткен."""
 
 
-async def get_test(db: AsyncSession, test_id: int) -> Test | None:
-    return await db.get(Test, test_id)
+# Test.questions / Question.options өздігінен жүктелмейді — керек жерде осы опция беріледі.
+_FULL = selectinload(Test.questions).selectinload(Question.options)
+
+
+async def get_test(
+    db: AsyncSession, test_id: int, *, full: bool = False
+) -> Test | None:
+    """full=True — сұрақтар мен нұсқалармен (өту, нәтиже, өшіру үшін).
+
+    full=False — тек тестің өзі (рұқсат тексеру, өзгерту). populate_existing
+    сессиядағы жартылай жүктелген нысанның орнына толық күй береді."""
+    query = select(Test).where(Test.id == test_id)
+    if full:
+        query = query.options(_FULL).execution_options(populate_existing=True)
+    return await db.scalar(query)
 
 
 async def get_question(db: AsyncSession, question_id: int) -> Question | None:
-    return await db.get(Question, question_id)
+    return await db.scalar(
+        select(Question)
+        .where(Question.id == question_id)
+        .options(selectinload(Question.options))
+        .execution_options(populate_existing=True)
+    )
 
 
 async def create_test(db: AsyncSession, topic_id: int, data: dict[str, object]) -> Test:
@@ -50,20 +69,23 @@ async def delete_test(db: AsyncSession, test: Test) -> None:
 
 
 async def _reload(db: AsyncSession, test_id: int) -> Test:
-    test = await db.get(Test, test_id)
-    if test is not None:
-        db.expire(test)
-    return await db.scalar(  # type: ignore[return-value]
-        select(Test).where(Test.id == test_id)
-    )
+    """Бір select: populate_existing нысанды сұрақтарымен қоса жаңартады."""
+    return await get_test(db, test_id, full=True)  # type: ignore[return-value]
 
 
 async def add_question(
-    db: AsyncSession, test: Test, kind: str, text: str, points: int, options: list[dict]
+    db: AsyncSession,
+    test_id: int,
+    kind: str,
+    text: str,
+    points: int,
+    options: list[dict],
 ) -> Test:
-    position = max((item.position for item in test.questions), default=0) + 1
+    last = await db.scalar(
+        select(func.max(Question.position)).where(Question.test_id == test_id)
+    )
     question = Question(
-        test_id=test.id, kind=kind, text=text, points=points, position=position
+        test_id=test_id, kind=kind, text=text, points=points, position=(last or 0) + 1
     )
     db.add(question)
     await db.flush()
@@ -79,7 +101,7 @@ async def add_question(
         )
 
     await db.commit()
-    return await _reload(db, test.id)
+    return await _reload(db, test_id)
 
 
 async def update_question(
@@ -121,6 +143,16 @@ async def delete_question(db: AsyncSession, question: Question) -> Test:
 
 def max_score(test: Test) -> int:
     return sum(question.points for question in test.questions)
+
+
+async def max_score_of(db: AsyncSession, test_id: int) -> int:
+    """Сұрақтарды жүктемей, жиынтық баллды SQL-мен санайды."""
+    total = await db.scalar(
+        select(func.coalesce(func.sum(Question.points), 0)).where(
+            Question.test_id == test_id
+        )
+    )
+    return int(total or 0)
 
 
 async def attempts_of(
@@ -246,11 +278,10 @@ async def finish_attempt(
     attempt.finished_at = datetime.now(UTC)
     await db.commit()
 
-    # id-ді алдын ала ұстаймыз: expire-ден кейін атрибут оқу IO тудырады.
-    attempt_id = attempt.id
-    db.expire(attempt)
     return await db.scalar(  # type: ignore[return-value]
-        select(TestAttempt).where(TestAttempt.id == attempt_id)
+        select(TestAttempt)
+        .where(TestAttempt.id == attempt.id)
+        .execution_options(populate_existing=True)
     )
 
 

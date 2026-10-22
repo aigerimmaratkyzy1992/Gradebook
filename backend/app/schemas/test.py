@@ -2,6 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.common import PatchModel
 from app.schemas.user import UserResponse
 
 
@@ -90,7 +91,15 @@ class CreateTestRequest(BaseModel):
     due_at: datetime | None = None
 
 
-class UpdateTestRequest(BaseModel):
+class UpdateTestRequest(PatchModel):
+    non_nullable = (
+        "title",
+        "attempts_allowed",
+        "shuffle_questions",
+        "shuffle_options",
+        "show_result",
+    )
+
     title: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = None
     time_limit_minutes: int | None = Field(default=None, ge=1, le=600)

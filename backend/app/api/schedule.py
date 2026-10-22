@@ -3,13 +3,15 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import exists, select
 
 from app.api.deps import CurrentUser, Db, require_role
 from app.models import Course, Group, Lesson, User, course_groups
 from app.models.group import group_members
 from app.roles import ADMIN, STUDENT, TEACHER
+from app.schemas.common import PatchModel
 from app.schemas.course import GroupBrief
+from app.services import course as course_service
 
 router = APIRouter()
 
@@ -44,7 +46,9 @@ class CreateLessonRequest(BaseModel):
     room: str | None = Field(default=None, max_length=50)
 
 
-class UpdateLessonRequest(BaseModel):
+class UpdateLessonRequest(PatchModel):
+    non_nullable = ("course_id", "group_id", "weekday", "starts_at", "ends_at")
+
     course_id: int | None = None
     group_id: int | None = None
     weekday: int | None = Field(default=None, ge=0, le=6)
@@ -62,9 +66,10 @@ async def _validate(
     ends_at: time,
 ) -> None:
     """Дисциплина/топ бар ма, рұқсат бар ма, уақыт дұрыс па."""
-    course = await db.get(Course, course_id)
-    group = await db.get(Group, group_id)
-    if course is None or group is None:
+    # Тек бағандар: Course/Group нысандарын (топтар, студенттер) жүктемейміз.
+    course = await course_service.course_row(db, course_id)
+    group_exists = await db.scalar(select(exists().where(Group.id == group_id)))
+    if course is None or not group_exists:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, "Дисциплина или группа не найдена"
         )
@@ -78,7 +83,7 @@ async def _validate(
     linked = await db.scalar(
         select(course_groups.c.group_id).where(
             course_groups.c.course_id == course.id,
-            course_groups.c.group_id == group.id,
+            course_groups.c.group_id == group_id,
         )
     )
     if linked is None:
@@ -139,7 +144,7 @@ async def update_lesson(
 
     await _validate(db, user, course_id, group_id, starts_at, ends_at)
     # Бөтен сабақты өзгертуге жол жоқ: ескі дисциплинасын да тексереміз.
-    old_course = await db.get(Course, lesson.course_id)
+    old_course = await course_service.course_row(db, lesson.course_id)
     if user.role != ADMIN and old_course.teacher_id != user.id:  # type: ignore[union-attr]
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав")
 
@@ -161,7 +166,7 @@ async def delete_lesson(lesson_id: int, db: Db, user: StaffUser) -> None:
     if lesson is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Занятие не найдено")
 
-    course = await db.get(Course, lesson.course_id)
+    course = await course_service.course_row(db, lesson.course_id)
     if user.role != ADMIN and course.teacher_id != user.id:  # type: ignore[union-attr]
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав")
 

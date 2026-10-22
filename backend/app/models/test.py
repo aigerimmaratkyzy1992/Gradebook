@@ -24,6 +24,10 @@ SHORT = "short"
 QUESTION_KINDS = (SINGLE, MULTIPLE, TRUE_FALSE, MATCH, SHORT)
 
 
+# Ескерту: Test.questions / Question.options өздігінен жүктелмейді
+# (lazy="raise_on_sql"). Керек жерде services/test.py ішіндегі FULL опциялары беріледі.
+
+
 class Test(Base):
     __tablename__ = "tests"
 
@@ -48,7 +52,7 @@ class Test(Base):
     questions: Mapped[list["Question"]] = relationship(
         back_populates="test",
         cascade="all, delete-orphan",
-        lazy="selectin",
+        lazy="raise_on_sql",
         order_by="Question.position",
     )
 
@@ -69,7 +73,7 @@ class Question(Base):
     options: Mapped[list["Option"]] = relationship(
         back_populates="question",
         cascade="all, delete-orphan",
-        lazy="selectin",
+        lazy="raise_on_sql",
         order_by="Option.id",
     )
 
@@ -109,11 +113,11 @@ class TestAttempt(Base):
     score: Mapped[int] = mapped_column(Integer, default=0)
     max_score: Mapped[int] = mapped_column(Integer, default=0)
 
-    student: Mapped[User] = relationship(lazy="selectin")
+    student: Mapped[User] = relationship(lazy="raise_on_sql")
     answers: Mapped[list["TestAnswer"]] = relationship(
         back_populates="attempt",
         cascade="all, delete-orphan",
-        lazy="selectin",
+        lazy="raise_on_sql",
         order_by="TestAnswer.id",
     )
 

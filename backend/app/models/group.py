@@ -1,7 +1,7 @@
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, String, Table, func
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import Column, DateTime, ForeignKey, String, Table, func, select
+from sqlalchemy.orm import Mapped, column_property, mapped_column, relationship
 
 from app.db import Base
 from app.models.user import User
@@ -26,11 +26,18 @@ class Group(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
-    teacher: Mapped[User | None] = relationship(lazy="selectin")
+    # many-to-one: бір JOIN, қосымша сұраныссыз.
+    teacher: Mapped[User | None] = relationship(lazy="joined")
+    # Студенттер өздігінен жүктелмейді (Course.groups арқылы бәрі құламауы үшін):
+    # керек жерде selectinload(Group.students) беріледі.
     students: Mapped[list[User]] = relationship(
-        secondary=group_members, lazy="selectin", order_by=User.id
+        secondary=group_members, lazy="raise_on_sql", order_by=User.id
     )
-
-    @property
-    def students_count(self) -> int:
-        return len(self.students)
+    # Студент санын студенттерді жүктемей санау үшін: undefer(Group.students_count).
+    students_count: Mapped[int] = column_property(
+        select(func.count(group_members.c.student_id))
+        .where(group_members.c.group_id == id)
+        .correlate_except(group_members)
+        .scalar_subquery(),
+        deferred=True,
+    )

@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from typing import Annotated
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -8,6 +9,10 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 # libpq (psql, Neon сілтемесі) түсінетін, бірақ asyncpg қабылдамайтын параметрлер.
 LIBPQ_ONLY_PARAMS = {"sslmode", "channel_binding", "connect_timeout"}
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+# backend/ қалтасы: .env мен uploads/ процестің CWD-іне тәуелді болмауы керек,
+# әйтпесе uvicorn басқа қалтадан іске қосылса, ескі файлдар табылмай қалады.
+BASE_DIR = Path(__file__).resolve().parents[1]
 
 
 def parse_list(value: object) -> object:
@@ -32,7 +37,9 @@ def parse_list(value: object) -> object:
 class Settings(BaseSettings):
     """Қосымша баптаулары. .env файлынан оқылады."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=BASE_DIR / ".env", extra="ignore"
+    )
 
     database_url: str = (
         "postgresql+asyncpg://gradebook:gradebook@localhost:5432/gradebook"
@@ -49,8 +56,20 @@ class Settings(BaseSettings):
 
     debug: bool = True
 
-    # Жүктелген файлдар қалтасы (Render-де тұрақты диск жолын беруге болады).
+    # Cloudflare R2 (S3 API) — жүктелген файлдардың тұрақты орны. Render free
+    # дискі уақытша: деплой/ұйқыдан кейін uploads/ тазарып, файлдар жоғалатын.
+    # Бос болса (локалды даму) — файлдар upload_dir қалтасына жазылады.
+    s3_endpoint_url: str = ""
+    s3_access_key_id: str = ""
+    s3_secret_access_key: str = ""
+    s3_bucket: str = ""
+
+    # R2 бапталмағанда қолданылатын қалта. Салыстырмалы жол backend/ қалтасынан.
     upload_dir: str = "uploads"
+
+    @property
+    def has_s3(self) -> bool:
+        return bool(self.s3_endpoint_url and self.s3_bucket)
 
     @field_validator("database_url")
     @classmethod
@@ -102,7 +121,6 @@ class Settings(BaseSettings):
     smtp_user: str = ""
     smtp_password: str = ""
     smtp_from: str = ""
-
 
 
 settings = Settings()
